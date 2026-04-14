@@ -7,6 +7,13 @@
   "bin": {
     "open-mem": "dist/cli/index.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_USERNAME/open-mem.git"
+  },
+  "keywords": ["opencode", "memory", "persistent-memory", "ai", "coding"],
+  "author": "",
+  "license": "MIT",
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
