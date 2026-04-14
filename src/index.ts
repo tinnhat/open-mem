@@ -17,3 +17,5 @@ import { initDatabase } from './storage/sqlite.js';
 export async function initialize(): Promise<void> {
   await initDatabase();
 }
+
+export { server as plugin } from './plugin/index.js';
