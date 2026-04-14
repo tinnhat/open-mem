@@ -123,6 +123,7 @@ export async function initDatabase(): Promise<void> {
           prompt_number INTEGER,
           discovery_tokens INTEGER DEFAULT 0,
           content_hash TEXT,
+          quality_score REAL DEFAULT 0.5,
           created_at TEXT NOT NULL,
           created_at_epoch INTEGER NOT NULL
         )
@@ -189,6 +190,33 @@ export async function initDatabase(): Promise<void> {
       `);
 
       database.run(`
+        CREATE TABLE IF NOT EXISTS observation_access (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          observation_id INTEGER NOT NULL,
+          accessed_at INTEGER NOT NULL,
+          access_type TEXT CHECK(access_type IN ('search', 'cite', 'inject', 'timeline')) DEFAULT 'search'
+        )
+      `);
+
+      database.run(`CREATE INDEX IF NOT EXISTS idx_access_observation ON observation_access(observation_id)`);
+      database.run(`CREATE INDEX IF NOT EXISTS idx_access_time ON observation_access(accessed_at)`);
+
+      database.run(`
+        CREATE TABLE IF NOT EXISTS observation_decay (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          observation_id INTEGER UNIQUE NOT NULL,
+          importance_score REAL DEFAULT 0.5,
+          access_count INTEGER DEFAULT 0,
+          last_accessed_at INTEGER,
+          decay tier DEFAULT 'hot',
+          last_decay_check INTEGER
+        )
+      `);
+
+      database.run(`CREATE INDEX IF NOT EXISTS idx_decay_tier ON observation_decay(decay)`);
+      database.run(`CREATE INDEX IF NOT EXISTS idx_decay_score ON observation_decay(importance_score)`);
+
+      database.run(`
         CREATE TRIGGER IF NOT EXISTS observations_ai AFTER INSERT ON observations BEGIN
           INSERT INTO observations_fts(rowid, title, narrative, facts)
           VALUES (new.id, new.title, new.narrative, new.facts);
@@ -236,6 +264,7 @@ export interface Observation {
   prompt_number?: number;
   discovery_tokens?: number;
   content_hash?: string;
+  quality_score?: number;
 }
 
 export interface Summary {
@@ -303,8 +332,8 @@ export async function insertObservation(obs: Observation): Promise<{ id: number;
       INSERT INTO observations (
         session_id, project, type, title, narrative, facts, concepts,
         files_read, files_modified, prompt_number, discovery_tokens,
-        content_hash, created_at, created_at_epoch
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        content_hash, quality_score, created_at, created_at_epoch
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       obs.session_id,
       obs.project,
@@ -318,6 +347,7 @@ export async function insertObservation(obs: Observation): Promise<{ id: number;
       obs.prompt_number ?? null,
       obs.discovery_tokens ?? 0,
       contentHash,
+      obs.quality_score ?? 0.5,
       now,
       nowEpoch,
     ], function(err) {
@@ -609,5 +639,212 @@ export async function getObservationsByIds(ids: number[]): Promise<any[]> {
         }
       }
     );
+  });
+}
+
+export async function recordAccess(
+  observationId: number,
+  accessType: 'search' | 'cite' | 'inject' | 'timeline' = 'search'
+): Promise<void> {
+  const database = await getDb();
+  const now = Date.now();
+
+  return new Promise((resolve) => {
+    database.run(
+      `INSERT INTO observation_access (observation_id, accessed_at, access_type) VALUES (?, ?, ?)`,
+      [observationId, now, accessType],
+      (err) => {
+        if (err) {
+          console.error('[open-mem] Record access error:', err);
+        }
+        resolve();
+      }
+    );
+  });
+}
+
+export async function updateDecayInfo(
+  observationId: number,
+  importanceScore?: number
+): Promise<void> {
+  const database = await getDb();
+  const now = Date.now();
+
+  return new Promise((resolve) => {
+    database.run(`
+      INSERT INTO observation_decay (observation_id, importance_score, access_count, last_accessed_at, last_decay_check)
+      VALUES (?, ?, 1, ?, ?)
+      ON CONFLICT(observation_id) DO UPDATE SET
+        access_count = access_count + 1,
+        last_accessed_at = excluded.last_accessed_at,
+        importance_score = COALESCE(?, importance_score)
+    `, [observationId, importanceScore ?? 0.5, now, now, importanceScore], (err) => {
+      if (err) {
+        console.error('[open-mem] Update decay info error:', err);
+      }
+      resolve();
+    });
+  });
+}
+
+export async function getTimeDecayScore(observationId: number): Promise<number> {
+  const database = await getDb();
+
+  return new Promise((resolve) => {
+    database.get(`
+      SELECT d.importance_score, d.access_count, d.last_accessed_at, d.decay,
+             o.created_at_epoch
+      FROM observation_decay d
+      JOIN observations o ON o.id = d.observation_id
+      WHERE d.observation_id = ?
+    `, [observationId], (err: Error | null, row: any) => {
+      if (err || !row) {
+        resolve(0);
+        return;
+      }
+
+      const decayRate = row.decay === 'hot' ? 0.01 : row.decay === 'warm' ? 0.05 : 0.1;
+      const lastAccessed = row.last_accessed_at || row.created_at_epoch;
+      const hoursSinceAccess = (Date.now() - lastAccessed) / (1000 * 60 * 60);
+      const recencyScore = Math.exp(-decayRate * hoursSinceAccess);
+      const importanceWeight = row.importance_score || 0.5;
+      const accessBonus = Math.log1p(row.access_count || 0) * 0.1;
+
+      resolve(Math.min(1, recencyScore * importanceWeight + accessBonus));
+    });
+  });
+}
+
+export async function getObservationDecay(observationId: number): Promise<string> {
+  const database = await getDb();
+
+  return new Promise((resolve) => {
+    database.get(
+      `SELECT decay FROM observation_decay WHERE observation_id = ?`,
+      [observationId],
+      (err: Error | null, row: any) => {
+        if (err || !row) {
+          resolve('hot');
+        } else {
+          resolve(row.decay || 'hot');
+        }
+      }
+    );
+  });
+}
+
+export async function updateObservationQuality(
+  observationId: number,
+  qualityScore: number
+): Promise<void> {
+  const database = await getDb();
+
+  return new Promise((resolve) => {
+    database.run(
+      `UPDATE observations SET quality_score = ? WHERE id = ?`,
+      [Math.max(0, Math.min(1, qualityScore)), observationId],
+      (err) => {
+        if (err) {
+          console.error('[open-mem] Update quality error:', err);
+        }
+        resolve();
+      }
+    );
+  });
+}
+
+export async function shouldStoreObservation(
+  qualityScore: number,
+  minThreshold = 0.3
+): Promise<boolean> {
+  return qualityScore >= minThreshold;
+}
+
+export async function decayObservables(project: string): Promise<{ promoted: number; demoted: number; removed: number }> {
+  const database = await getDb();
+  const now = Date.now();
+  const HOT_THRESHOLD_DAYS = 7;
+  const WARM_THRESHOLD_DAYS = 30;
+  const COLD_THRESHOLD_DAYS = 90;
+  const MIN_QUALITY_TO_SURVIVE = 0.2;
+
+  const hotThreshold = now - HOT_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
+  const warmThreshold = now - WARM_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
+  const coldThreshold = now - COLD_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
+
+  let promoted = 0;
+  let demoted = 0;
+  let removed = 0;
+
+  return new Promise((resolve) => {
+    database.all(`
+      SELECT d.id, d.observation_id, d.decay, d.last_decay_check,
+             o.created_at_epoch, o.quality_score
+      FROM observation_decay d
+      JOIN observations o ON o.id = d.observation_id
+      WHERE o.project = ?
+    `, [project], (err: Error | null, rows: any[]) => {
+      if (err) {
+        console.error('[open-mem] Decay query error:', err);
+        resolve({ promoted: 0, demoted: 0, removed: 0 });
+        return;
+      }
+
+      for (const row of rows) {
+        const age = now - (row.last_decay_check || row.created_at_epoch);
+        const ageHours = age / (1000 * 60 * 60);
+
+        let newDecay = row.decay;
+        if (row.decay === 'hot' && ageHours > HOT_THRESHOLD_DAYS * 24) {
+          newDecay = 'warm';
+          demoted++;
+        } else if (row.decay === 'warm' && ageHours > WARM_THRESHOLD_DAYS * 24) {
+          newDecay = 'cold';
+          demoted++;
+        } else if (row.decay === 'cold' && ageHours > COLD_THRESHOLD_DAYS * 24) {
+          if (row.quality_score < MIN_QUALITY_TO_SURVIVE) {
+            database.run(`DELETE FROM observations WHERE id = ?`, [row.observation_id]);
+            database.run(`DELETE FROM observation_decay WHERE id = ?`, [row.id]);
+            removed++;
+            continue;
+          }
+        } else if (row.decay === 'hot' && ageHours < HOT_THRESHOLD_DAYS * 24) {
+          promoted++;
+        }
+
+        if (newDecay !== row.decay) {
+          database.run(
+            `UPDATE observation_decay SET decay = ?, last_decay_check = ? WHERE id = ?`,
+            [newDecay, now, row.id]
+          );
+        }
+      }
+
+      resolve({ promoted, demoted, removed });
+    });
+  });
+}
+
+export async function getStats(project: string): Promise<any> {
+  const database = await getDb();
+  const escaped = project.replace(/'/g, "''");
+
+  return new Promise((resolve) => {
+    database.get(`
+      SELECT
+        (SELECT COUNT(*) FROM observations WHERE project = '${escaped}') as total,
+        (SELECT COUNT(*) FROM observations WHERE project = '${escaped}' AND created_at_epoch > ?) as recent,
+        (SELECT COUNT(*) FROM observation_decay WHERE observation_id IN (SELECT id FROM observations WHERE project = '${escaped}') AND decay = 'hot') as hot,
+        (SELECT COUNT(*) FROM observation_decay WHERE observation_id IN (SELECT id FROM observations WHERE project = '${escaped}') AND decay = 'warm') as warm,
+        (SELECT COUNT(*) FROM observation_decay WHERE observation_id IN (SELECT id FROM observations WHERE project = '${escaped}') AND decay = 'cold') as cold,
+        (SELECT AVG(quality_score) FROM observations WHERE project = '${escaped}') as avgQuality
+    `, [Date.now() - 7 * 24 * 60 * 60 * 1000], (err: Error | null, row: any) => {
+      if (err) {
+        console.error('[open-mem] Get stats error:', err);
+        resolve({ total: 0, recent: 0, hot: 0, warm: 0, cold: 0, avgQuality: 0 });
+      } else {
+        resolve(row);
+      }
+    });
   });
 }

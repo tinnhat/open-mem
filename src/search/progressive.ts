@@ -1,4 +1,4 @@
-import { getDb, searchFts, Observation } from '../storage/sqlite.js';
+import { getDb, searchFts, Observation, getTimeDecayScore } from '../storage/sqlite.js';
 import { ObservationType } from '../taxonomy/types.js';
 import { generateEmbedding, searchVectors, isVectorStoreAvailable, rrfMerge } from '../storage/vectors.js';
 
@@ -149,4 +149,36 @@ export async function getObservations(
       }
     });
   });
+}
+
+export async function searchWithTimeDecay(
+  query: string,
+  options: {
+    type?: ObservationType;
+    project?: string;
+    limit?: number;
+    offset?: number;
+    hotOnly?: boolean;
+  } = {}
+): Promise<SearchResult[]> {
+  const results = await search(query, options);
+
+  if (options.hotOnly) {
+    return results;
+  }
+
+  const scoredWithDecay = await Promise.all(
+    results.map(async (r) => {
+      const decayScore = await getTimeDecayScore(r.id);
+      return {
+        ...r,
+        decayScore,
+        combinedScore: (r.score || 0) * 0.7 + decayScore * 0.3,
+      };
+    })
+  );
+
+  return scoredWithDecay
+    .sort((a, b) => b.combinedScore - a.combinedScore)
+    .map(({ decayScore, combinedScore, ...rest }) => rest as SearchResult);
 }

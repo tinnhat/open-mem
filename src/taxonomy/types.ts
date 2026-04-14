@@ -24,6 +24,7 @@ export interface CompressedObservation {
   promptNumber: number;
   createdAt: string;
   createdAtEpoch: number;
+  qualityScore?: number;
 }
 
 export interface SessionSummary {

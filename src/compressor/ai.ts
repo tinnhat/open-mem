@@ -16,7 +16,8 @@ Analyze this tool execution and return a JSON object with:
   "facts": ["Key fact 1", "Key fact 2"],
   "concepts": ["Concept learned"],
   "filesRead": ["file1.ts"],
-  "filesModified": ["file2.ts"]
+  "filesModified": ["file2.ts"],
+  "importance": 0.0-1.0
 }
 
 Rules:
@@ -24,7 +25,8 @@ Rules:
 - facts should be specific, not generic
 - Only include files that were actually read/modified
 - type must match the taxonomy above
-- If nothing worth remembering, return null`;
+- If nothing worth remembering, return null
+- importance: 0.0 = trivial/greeting, 0.5 = normal, 1.0 = critical insight`;
 
 const VALID_TYPES: ObservationType[] = [
   'decision', 'bugfix', 'feature', 'refactor', 'discovery', 'feedback', 'reference'
@@ -38,7 +40,20 @@ interface CompressionResult {
   concepts: string[];
   filesRead: string[];
   filesModified: string[];
+  importance?: number;
 }
+
+const MIN_IMPORTANCE_THRESHOLD = 0.3;
+
+const NOISE_PATTERNS = [
+  /^hi$/i, /^hello$/i, /^hey$/i, /^yo$/i,
+  /^thanks?$/i, /^thank you$/i,
+  /^ok(?:ay)?$/i, /^sure$/i, /^yes$/i, /^no$/i,
+  /^good$/i, /^great$/i, /^nice$/i,
+  /^(?:good )?morning$/i, /^(?:good )?afternoon$/i, /^(?:good )?evening$/i,
+  /^how are you$/i, /^how's it going$/i,
+  /^let's go$/i, /^done$/i, /^finished$/i,
+];
 
 export { COMPRESSION_PROMPT };
 
@@ -77,7 +92,8 @@ export async function compressObservation(
               facts: { type: 'array', items: { type: 'string' } },
               concepts: { type: 'array', items: { type: 'string' } },
               filesRead: { type: 'array', items: { type: 'string' } },
-              filesModified: { type: 'array', items: { type: 'string' } }
+              filesModified: { type: 'array', items: { type: 'string' } },
+              importance: { type: 'number', minimum: 0, maximum: 1 }
             },
             required: ['type', 'title']
           }
@@ -92,6 +108,13 @@ export async function compressObservation(
     }
 
     const sanitized = sanitizeCompressionResult(data, input, output);
+
+    const importance = data.importance ?? calculateImportance(sanitized);
+
+    if (importance < MIN_IMPORTANCE_THRESHOLD) {
+      console.log(`[open-mem] Noise filtered: "${sanitized.title}" (importance: ${importance.toFixed(2)})`);
+      return null;
+    }
     
     const compressed = {
       ...sanitized,
@@ -100,6 +123,7 @@ export async function compressObservation(
       promptNumber: 0,
       createdAt: new Date().toISOString(),
       createdAtEpoch: Date.now(),
+      qualityScore: importance,
     };
 
     if (isVectorStoreAvailable()) {
@@ -155,6 +179,33 @@ function sanitizeCompressionResult(
     filesRead,
     filesModified,
   };
+}
+
+function calculateImportance(obs: { title: string; narrative?: string; facts?: string[]; filesRead?: string[]; filesModified?: string[]; type: ObservationType }): number {
+  let score = 0.3;
+
+  if (obs.narrative && obs.narrative.length > 50) score += 0.15;
+  if (obs.narrative && obs.narrative.length > 150) score += 0.1;
+
+  if (obs.facts && obs.facts.length >= 2) score += 0.15;
+  if (obs.facts && obs.facts.length >= 4) score += 0.1;
+
+  if (obs.type === 'decision') score += 0.15;
+  if (obs.type === 'bugfix') score += 0.1;
+  if (obs.type === 'discovery') score += 0.1;
+
+  if (obs.filesModified && obs.filesModified.length > 0) score += 0.1;
+  if (obs.filesRead && obs.filesRead.length > 3) score += 0.05;
+
+  const titleLower = obs.title?.toLowerCase() || '';
+  for (const pattern of NOISE_PATTERNS) {
+    if (pattern.test(titleLower)) {
+      score = Math.max(0.1, score - 0.3);
+      break;
+    }
+  }
+
+  return Math.min(1, Math.max(0, score));
 }
 
 function extractFilesFromOutput(output: unknown): { filesRead: string[]; filesModified: string[] } {

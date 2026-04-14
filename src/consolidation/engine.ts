@@ -1,4 +1,4 @@
-import { getDb, countSessionsSince } from '../storage/sqlite.js';
+import { getDb, countSessionsSince, decayObservables } from '../storage/sqlite.js';
 import { getMemoryDir } from '../storage/memory-md.js';
 
 export const CONSOLIDATION_PROMPT = `
@@ -56,6 +56,7 @@ export interface ConsolidationResult {
   memoriesCreated: string[];
   memoriesDeleted: string[];
   indexUpdated: boolean;
+  decayResult?: { promoted: number; demoted: number; removed: number };
 }
 
 let currentLockPid: number | null = null;
@@ -174,11 +175,15 @@ export async function runConsolidation(project: string = getProjectDir()): Promi
 
     console.log('[Consolidation] Running with prompt:', prompt.substring(0, 100) + '...');
 
+    const decayResult = await decayObservables(project);
+    console.log(`[Consolidation] Decay: ${decayResult.promoted} promoted, ${decayResult.demoted} demoted, ${decayResult.removed} removed`);
+
     return {
       memoriesUpdated: [],
       memoriesCreated: [],
       memoriesDeleted: [],
-      indexUpdated: false
+      indexUpdated: false,
+      decayResult
     };
   } catch (e) {
     await rollbackLock();
