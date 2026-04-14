@@ -2,19 +2,44 @@ import { QueuedObservation } from './types';
 import { compressObservation } from '../compressor/ai.js';
 import { insertObservation } from '../storage/sqlite.js';
 
+const DEBOUNCE_MS = 1000;
+const MAX_QUEUE_SIZE = 100;
+
 export class ObservationQueue {
   private queue: QueuedObservation[] = [];
   private processing = false;
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   enqueue(obs: Omit<QueuedObservation, 'id' | 'retryCount'>): void {
+    if (this.queue.length >= MAX_QUEUE_SIZE) {
+      this.queue.shift();
+    }
+
     const item: QueuedObservation = {
       ...obs,
       id: crypto.randomUUID(),
       retryCount: 0,
     };
     this.queue.push(item);
-    if (!this.processing) {
-      this.processNext();
+    this.resetDebounce();
+  }
+
+  private resetDebounce(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    this.debounceTimer = setTimeout(() => {
+      this.processQueue();
+    }, DEBOUNCE_MS);
+  }
+
+  async flush(): Promise<void> {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    if (this.queue.length > 0) {
+      await this.processQueue();
     }
   }
 
@@ -22,16 +47,19 @@ export class ObservationQueue {
     return this.queue.length;
   }
 
-  private async processNext(): Promise<void> {
-    if (this.queue.length === 0) {
-      this.processing = false;
+  private async processQueue(): Promise<void> {
+    if (this.processing || this.queue.length === 0) {
       return;
     }
 
     this.processing = true;
-    const item = this.queue.shift()!;
-    await this.compressAndStore(item);
-    await this.processNext();
+    const items = this.queue.splice(0);
+
+    for (const item of items) {
+      await this.compressAndStore(item);
+    }
+
+    this.processing = false;
   }
 
   private async compressAndStore(item: QueuedObservation): Promise<void> {
@@ -72,7 +100,7 @@ export class ObservationQueue {
       }
     }
 
-    console.error(`Failed to compressAndStore after ${maxRetries} retries:`, lastError);
+    console.error(`[session-memory-opencode] Failed to compressAndStore after ${maxRetries} retries:`, lastError);
   }
 }
 

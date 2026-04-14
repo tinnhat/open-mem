@@ -5,7 +5,7 @@ export async function injectPriorContext(sessionId: string): Promise<void> {
   const project = process.cwd();
 
   const [recentResults, lastSummary] = await Promise.all([
-    search(project, { project, limit: 5 }),
+    search('', { project, limit: 5 }),
     getSessionSummary(sessionId),
   ]);
 

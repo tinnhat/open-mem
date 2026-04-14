@@ -7,12 +7,14 @@ import { compressObservation } from '../compressor/ai.js';
 import { writeTopicFile, readMemoryIndex, writeMemoryIndex, getAllTopicFiles, readTopicFile } from '../storage/memory-md.js';
 import { generateAgentsMd } from '../consolidation/agents-md.js';
 import { ensureServices } from './startup.js';
+import { observationQueue } from '../observer/queue.js';
 import type { ObservationType } from '../taxonomy/types.js';
 
 let dbInitialized = false;
 const injectedSessions = new Set<string>();
 const sessionObservations = new Map<string, string[]>();
 const sessionPromptCount = new Map<string, number>();
+let isAiCallActive = false;
 
 const HIGH_VALUE_TOOLS = [
   'Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep',
@@ -302,6 +304,10 @@ export const server: Function = async (ctx: PluginContext) => {
 
     'tool.execute.after': async ({ tool: toolName, sessionID, args, output }: { tool: string; sessionID: string; args: unknown; output?: { output?: string } }) => {
       if (!HIGH_VALUE_TOOLS.includes(toolName)) return;
+      if (isAiCallActive) {
+        console.log('[session-memory-opencode] Skipping compression - AI call in progress');
+        return;
+      }
 
       try {
         const project = ctx.directory || process.cwd();
@@ -311,6 +317,7 @@ export const server: Function = async (ctx: PluginContext) => {
           toolOutput = JSON.stringify(toolOutput);
         }
 
+        isAiCallActive = true;
         const compressed = await compressObservation(
           toolName,
           args,
@@ -319,6 +326,7 @@ export const server: Function = async (ctx: PluginContext) => {
           project,
           ctx.client
         );
+        isAiCallActive = false;
 
         let result: { id: number; deduplicated: boolean };
         if (compressed) {
@@ -362,11 +370,18 @@ export const server: Function = async (ctx: PluginContext) => {
           );
         }
       } catch (error) {
+        isAiCallActive = false;
         console.error('[session-memory-opencode] Tool capture error:', error);
       }
     },
 
     'session.idle': async () => {
+      try {
+        await observationQueue.flush();
+      } catch (error) {
+        console.error('[session-memory-opencode] Queue flush error:', error);
+      }
+
       for (const [sessionId] of sessionObservations) {
         try {
           const project = ctx.directory || process.cwd();
@@ -380,6 +395,12 @@ export const server: Function = async (ctx: PluginContext) => {
     'session.deleted': async ({ session }: { session: { id: string } }) => {
       const sessionId = session.id;
       console.log('[session-memory-opencode] Session deleted:', sessionId);
+
+      try {
+        await observationQueue.flush();
+      } catch (error) {
+        console.error('[session-memory-opencode] Queue flush error:', error);
+      }
 
       try {
         const project = ctx.directory || process.cwd();
