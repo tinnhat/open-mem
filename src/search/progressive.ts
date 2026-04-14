@@ -1,11 +1,13 @@
 import { getDb, searchFts, Observation } from '../storage/sqlite.js';
 import { ObservationType } from '../taxonomy/types.js';
+import { generateEmbedding, searchVectors, isVectorStoreAvailable, rrfMerge } from '../storage/vectors.js';
 
 export interface SearchResult {
   id: number;
   type: ObservationType;
   title: string;
   createdAt: string;
+  score?: number;
 }
 
 export async function search(
@@ -19,14 +21,60 @@ export async function search(
 ): Promise<SearchResult[]> {
   const { type, project, limit = 20, offset = 0 } = options;
 
-  const results = await searchFts(query, { type, project, limit, offset });
-
-  return results.map(row => ({
+  const ftsResults = await searchFts(query, { type, project, limit, offset });
+  const ftsMapped = ftsResults.map((row, idx) => ({
     id: row.id,
+    rank: idx,
     type: row.type as ObservationType,
     title: row.title,
     createdAt: row.created_at
   }));
+
+  if (!isVectorStoreAvailable() || !query.trim()) {
+    return ftsMapped;
+  }
+
+  try {
+    const queryEmbedding = await generateEmbedding(query);
+    const vecResults = await searchVectors(queryEmbedding, limit);
+
+    if (vecResults.length === 0) {
+      return ftsMapped;
+    }
+
+    const merged = rrfMerge(
+      ftsMapped.map(r => ({ id: r.id })),
+      vecResults
+    );
+
+    const mergedMap = new Map(merged.map(m => [m.id, m.score]));
+    const ids = merged.map(m => m.id);
+
+    const db = await getDb();
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = await new Promise<any[]>((resolve) => {
+      db.all(
+        `SELECT id, type, title, created_at FROM observations WHERE id IN (${placeholders})`,
+        ids,
+        (err, result) => {
+          if (err) resolve([]);
+          else resolve(result);
+        }
+      );
+    });
+
+    return rows.map(row => ({
+      id: row.id,
+      type: row.type as ObservationType,
+      title: row.title,
+      createdAt: row.created_at,
+      score: mergedMap.get(row.id) || 0,
+    })).sort((a, b) => (b.score || 0) - (a.score || 0));
+
+  } catch (e) {
+    console.warn('[open-mem] Vector search failed, falling back to FTS:', e);
+    return ftsMapped;
+  }
 }
 
 export async function timeline(

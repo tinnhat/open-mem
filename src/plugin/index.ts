@@ -1,8 +1,11 @@
 import { tool } from '@opencode-ai/plugin';
+import path from 'path';
+import fs from 'fs';
 import { initDatabase, insertObservation, insertSummary, insertUserPrompt, getObservationsByIds } from '../storage/sqlite.js';
 import { search, timeline, getObservations } from '../search/progressive.js';
 import { compressObservation } from '../compressor/ai.js';
 import { writeTopicFile, readMemoryIndex, writeMemoryIndex, getAllTopicFiles, readTopicFile } from '../storage/memory-md.js';
+import { generateAgentsMd } from '../consolidation/agents-md.js';
 import type { ObservationType } from '../taxonomy/types.js';
 
 let dbInitialized = false;
@@ -219,6 +222,11 @@ async function finalizeSession(sessionId: string, project: string, client: Plugi
       console.log('[open-mem] Session summary created for:', sessionId);
       await updateMemoryIndex(project);
     }
+
+    const agentsMdContent = await generateAgentsMd({ project, days: 7 });
+    const agentsMdPath = path.join(project, 'AGENTS.md');
+    fs.writeFileSync(agentsMdPath, agentsMdContent);
+    console.log('[open-mem] AGENTS.md updated at:', agentsMdPath);
   } catch (error) {
     console.error('[open-mem] Finalize session error:', error);
   } finally {

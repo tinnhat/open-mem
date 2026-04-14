@@ -1,5 +1,6 @@
 import type { CompressedObservation, ObservationType } from '../taxonomy/types.js';
 import { stripSensitiveData } from '../privacy/strip.js';
+import { generateEmbedding, storeEmbedding, isVectorStoreAvailable } from '../storage/vectors.js';
 
 const COMPRESSION_PROMPT = `You are compressing a tool execution into a structured memory.
 
@@ -92,7 +93,7 @@ export async function compressObservation(
 
     const sanitized = sanitizeCompressionResult(data, input, output);
     
-    return {
+    const compressed = {
       ...sanitized,
       sessionId,
       project,
@@ -100,6 +101,22 @@ export async function compressObservation(
       createdAt: new Date().toISOString(),
       createdAtEpoch: Date.now(),
     };
+
+    if (isVectorStoreAvailable()) {
+      const textToEmbed = [
+        compressed.title,
+        compressed.narrative || '',
+        ...compressed.facts,
+      ].join(' ');
+      try {
+        const embedding = await generateEmbedding(textToEmbed);
+        await storeEmbedding(0, embedding);
+      } catch (e) {
+        console.warn('[open-mem] Failed to store embedding:', e);
+      }
+    }
+
+    return compressed;
   } catch (error) {
     console.error('[open-mem] Compression error:', error);
     return null;

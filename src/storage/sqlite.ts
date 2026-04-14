@@ -3,9 +3,11 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
+import { load as loadVecExtension } from 'sqlite-vec';
 
 const MEMORY_DIR = path.join(os.homedir(), '.config', 'opencode', 'memory');
 const DB_PATH = path.join(MEMORY_DIR, 'memory.db');
+const VEC_EXTENSION_LOADED = Symbol('vecExtensionLoaded');
 
 export function generateContentHash(content: {
   type: string;
@@ -60,6 +62,19 @@ function ensureDb(): sqlite3.Database {
   return db;
 }
 
+let vecExtLoaded = false;
+
+async function ensureVecExtension(database: sqlite3.Database): Promise<void> {
+  if (vecExtLoaded) return;
+  try {
+    const extPath = await import('sqlite-vec').then(m => m.getLoadablePath());
+    (database as any).loadExtension(extPath);
+    vecExtLoaded = true;
+  } catch (e) {
+    console.warn('[open-mem] Failed to load vec extension:', e);
+  }
+}
+
 export async function getDb(): Promise<sqlite3.Database> {
   return new Promise((resolve) => {
     const database = ensureDb();
@@ -69,6 +84,7 @@ export async function getDb(): Promise<sqlite3.Database> {
 
 export async function initDatabase(): Promise<void> {
   const database = await getDb();
+  await ensureVecExtension(database);
 
   return new Promise((resolve, reject) => {
     database.serialize(() => {
@@ -192,6 +208,13 @@ export async function initDatabase(): Promise<void> {
           INSERT INTO observations_fts(rowid, title, narrative, facts)
           VALUES (new.id, new.title, new.narrative, new.facts);
         END
+      `);
+
+      database.run(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS observations_vec USING vec0(
+          observation_id INTEGER,
+          embedding FLOAT[768]
+        )
       `);
 
       resolve();
@@ -448,6 +471,33 @@ export async function getRecentObservations(project: string, limit = 50): Promis
         resolve([]);
       } else {
         resolve(rows);
+      }
+    });
+  });
+}
+
+export async function getRecentByProject(project: string, days: number): Promise<Observation[]> {
+  const sinceEpoch = Date.now() - days * 24 * 60 * 60 * 1000;
+  const database = await getDb();
+  const escaped = project.replace(/'/g, "''");
+
+  return new Promise((resolve, reject) => {
+    database.all(`
+      SELECT * FROM observations
+      WHERE project = '${escaped}' AND created_at_epoch >= ${sinceEpoch}
+      ORDER BY created_at_epoch DESC
+    `, (err, rows: any[]) => {
+      if (err) {
+        console.error('[open-mem] Get recent by project error:', err);
+        resolve([]);
+      } else {
+        resolve(rows.map(row => ({
+          ...row,
+          facts: row.facts ? JSON.parse(row.facts) : undefined,
+          concepts: row.concepts ? JSON.parse(row.concepts) : undefined,
+          files_read: row.files_read ? JSON.parse(row.files_read) : undefined,
+          files_modified: row.files_modified ? JSON.parse(row.files_modified) : undefined,
+        })));
       }
     });
   });

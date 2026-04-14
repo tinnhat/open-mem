@@ -1,14 +1,78 @@
 import express from 'express';
+import path from 'path';
 import { getDb } from '../storage/sqlite.js';
 import { search, timeline, getObservations } from '../search/progressive.js';
+import fs from 'fs';
+import os from 'os';
+
+const MEMORY_DIR = path.join(os.homedir(), '.config', 'opencode', 'memory');
+const DB_PATH = path.join(MEMORY_DIR, 'memory.db');
 
 const app = express();
 const PORT = 37778;
 
 app.use(express.json());
 
+const dashboardPath = path.join(process.cwd(), 'src', 'worker', 'dashboard');
+app.use('/dashboard', express.static(dashboardPath));
+
+app.get('/dashboard', (_req, res) => {
+  res.sendFile(path.join(dashboardPath, 'index.html'));
+});
+
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() });
+});
+
+app.get('/api/stats', async (_req, res) => {
+  try {
+    const db = await getDb();
+    
+    const totalRow = await new Promise<any>((resolve) => {
+      db.get('SELECT COUNT(*) as count FROM observations', (_err, row) => resolve(row));
+    });
+    
+    const typeRows = await new Promise<any[]>((resolve) => {
+      db.all('SELECT type, COUNT(*) as count FROM observations GROUP BY type', (_err, rows) => resolve(rows));
+    });
+    
+    let storageSize = '0 B';
+    try {
+      const stats = fs.statSync(DB_PATH);
+      const bytes = stats.size;
+      if (bytes < 1024) storageSize = `${bytes} B`;
+      else if (bytes < 1024 * 1024) storageSize = `${(bytes / 1024).toFixed(1)} KB`;
+      else storageSize = `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    } catch {}
+    
+    const byType: Record<string, number> = {};
+    (typeRows || []).forEach(row => { byType[row.type] = row.count; });
+    
+    res.json({
+      total: totalRow?.count || 0,
+      byType,
+      storageSize
+    });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+app.get('/api/observations', async (req, res) => {
+  const { limit = 20, offset = 0 } = req.query;
+  try {
+    const db = await getDb();
+    const rows = await new Promise<any[]>((resolve) => {
+      db.all(
+        'SELECT id, type, title, created_at FROM observations ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?',
+        [Number(limit), Number(offset)],
+        (_err, rows) => resolve(rows || [])
+      );
+    });
+    res.json({ observations: rows });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
 });
 
 app.get('/api/search', async (req, res) => {
@@ -20,7 +84,7 @@ app.get('/api/search', async (req, res) => {
       limit: limit ? Number(limit) : undefined,
       offset: offset ? Number(offset) : undefined,
     });
-    res.json(results);
+    res.json({ results });
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
