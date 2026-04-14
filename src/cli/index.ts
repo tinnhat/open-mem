@@ -6,7 +6,7 @@ import { uninstall } from './commands/uninstall.js';
 const command = process.argv[2] || 'help';
 
 async function main() {
-  console.log('[open-mem] CLI v1.0.0\n');
+  console.log('[opencode-mem] CLI v1.0.0\n');
 
   switch (command) {
     case 'install':
@@ -23,25 +23,25 @@ async function main() {
 
 function showHelp() {
   console.log(`
-open-mem - Persistent memory system for Opencode
+opencode-mem - Persistent memory system for Opencode
 
 Usage:
-  open-mem <command> [options]
+  opencode-mem <command> [options]
 
 Commands:
-  install     Install open-mem plugin to Opencode
-  uninstall   Remove open-mem plugin from Opencode
+  install     Install opencode-mem plugin to Opencode
+  uninstall   Remove opencode-mem plugin from Opencode
   help        Show this help message
 
 Examples:
-  npx open-mem install     Install the plugin
-  npx open-mem uninstall   Remove the plugin
+  npx opencode-mem install     Install the plugin
+  npx opencode-mem uninstall   Remove the plugin
 
-For more information, see: https://github.com/your-repo/open-mem
+For more information, see: https://github.com/tinnhat/opencode-mem
 `);
 }
 
 main().catch(err => {
-  console.error('[open-mem] Error:', err.message);
+  console.error('[opencode-mem] Error:', err.message);
   process.exit(1);
 });

@@ -3,22 +3,22 @@ import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
 
-const PLUGIN_DIR = path.join(os.homedir(), '.config', 'opencode', 'plugins', 'open-mem');
+const PLUGIN_DIR = path.join(os.homedir(), '.config', 'opencode', 'plugins', 'opencode-mem');
 const OPENCODE_CONFIG = path.join(os.homedir(), '.config', 'opencode', 'opencode.jsonc');
 
 export async function install() {
-  console.log('[open-mem] Starting installation...\n');
+  console.log('[opencode-mem] Starting installation...\n');
 
   try {
     // Step 1: Check if Opencode config exists
     if (!fs.existsSync(path.dirname(OPENCODE_CONFIG))) {
-      console.error('[open-mem] Error: Opencode config directory not found.');
+      console.error('[opencode-mem] Error: Opencode config directory not found.');
       console.error('         Is Opencode installed?');
       process.exit(1);
     }
 
     // Step 2: Create plugin directory
-    console.log('[open-mem] Creating plugin directory...');
+    console.log('[opencode-mem] Creating plugin directory...');
     if (!fs.existsSync(PLUGIN_DIR)) {
       fs.mkdirSync(PLUGIN_DIR, { recursive: true });
       console.log('         Created:', PLUGIN_DIR);
@@ -30,13 +30,13 @@ export async function install() {
     const sourceDist = path.join(process.cwd(), 'dist');
     
     if (!fs.existsSync(sourceDist)) {
-      console.error('[open-mem] Error: dist/ directory not found.');
+      console.error('[opencode-mem] Error: dist/ directory not found.');
       console.error('         Please run "npm run build" first.');
       process.exit(1);
     }
 
     // Step 4: Copy dist files to plugin directory
-    console.log('[open-mem] Copying plugin files...');
+    console.log('[opencode-mem] Copying plugin files...');
     copyDirRecursive(sourceDist, PLUGIN_DIR);
     console.log('         Copied dist/* →', PLUGIN_DIR);
 
@@ -56,7 +56,7 @@ export async function install() {
     }
 
     // Step 6: Install dependencies in plugin directory
-    console.log('[open-mem] Installing dependencies...');
+    console.log('[opencode-mem] Installing dependencies...');
     try {
       execSync('npm install', {
         cwd: PLUGIN_DIR,
@@ -77,15 +77,15 @@ export async function install() {
     }
 
     // Step 7: Update opencode.jsonc config
-    console.log('[open-mem] Updating Opencode config...');
+    console.log('[opencode-mem] Updating Opencode config...');
     updateOpencodeConfig();
     console.log('         Updated:', OPENCODE_CONFIG);
 
     // Step 8: Verify installation
-    console.log('\n[open-mem] Verifying installation...');
+    console.log('\n[opencode-mem] Verifying installation...');
     verifyInstallation();
 
-    console.log('\n[open-mem] ✅ Installation complete!');
+    console.log('\n[opencode-mem] ✅ Installation complete!');
     console.log('\nNext steps:');
     console.log('  1. Restart Opencode');
     console.log('  2. The plugin will auto-load');
@@ -93,7 +93,7 @@ export async function install() {
     console.log('    ', path.join(os.homedir(), '.config', 'opencode', 'memory'));
     
   } catch (err: any) {
-    console.error('\n[open-mem] ❌ Installation failed:', err.message);
+    console.error('\n[opencode-mem] ❌ Installation failed:', err.message);
     process.exit(1);
   }
 }
@@ -143,12 +143,12 @@ function updateOpencodeConfig() {
       let newPlugins;
       
       if (existingPlugins === '') {
-        newPlugins = '"open-mem/plugin"';
+        newPlugins = '"opencode-mem/plugin"';
       } else {
         // Check if last item has trailing comma
         newPlugins = existingPlugins.endsWith(',') 
-          ? existingPlugins + ' "open-mem/plugin"'
-          : existingPlugins + ', "open-mem/plugin"';
+          ? existingPlugins + ' "opencode-mem/plugin"'
+          : existingPlugins + ', "opencode-mem/plugin"';
       }
       
       configContent = configContent.replace(
@@ -159,7 +159,7 @@ function updateOpencodeConfig() {
       // No plugins array found, add one
       configContent = configContent.replace(
         /\{/,
-        '{\n  "plugin": ["open-mem/plugin"]'
+        '{\n  "plugin": ["opencode-mem/plugin"]'
       );
     }
 

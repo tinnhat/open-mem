@@ -2,12 +2,12 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-const PLUGIN_DIR = path.join(os.homedir(), '.config', 'opencode', 'plugins', 'open-mem');
+const PLUGIN_DIR = path.join(os.homedir(), '.config', 'opencode', 'plugins', 'opencode-mem');
 const OPENCODE_CONFIG = path.join(os.homedir(), '.config', 'opencode', 'opencode.jsonc');
 const MEMORY_DIR = path.join(os.homedir(), '.config', 'opencode', 'memory');
 
 export async function uninstall() {
-  console.log('[open-mem] Starting uninstallation...\n');
+  console.log('[opencode-mem] Starting uninstallation...\n');
 
   try {
     // Step 1: Ask for confirmation
@@ -47,8 +47,8 @@ function updateOpencodeConfig() {
   try {
     let configContent = fs.readFileSync(OPENCODE_CONFIG, 'utf-8');
 
-    // Remove open-mem/plugin from the plugins array
-    configContent = configContent.replace(/["']open-mem\/plugin["'],?\s*/g, '');
+    // Remove opencode-mem/plugin from the plugins array
+    configContent = configContent.replace(/["']opencode-mem\/plugin["'],?\s*/g, '');
 
     // Clean up any double commas or trailing commas in arrays
     configContent = configContent.replace(/,\s*]/g, ']');
@@ -58,7 +58,7 @@ function updateOpencodeConfig() {
     console.log('         Updated:', OPENCODE_CONFIG);
   } catch (err) {
     console.warn('         Warning: Could not update config automatically.');
-    console.warn('         Please manually remove "open-mem/plugin" from plugins array in:');
+    console.warn('         Please manually remove "opencode-mem/plugin" from plugins array in:');
     console.warn('         ', OPENCODE_CONFIG);
   }
 }
