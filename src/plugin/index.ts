@@ -6,6 +6,7 @@ import { search, timeline, getObservations } from '../search/progressive.js';
 import { compressObservation } from '../compressor/ai.js';
 import { writeTopicFile, readMemoryIndex, writeMemoryIndex, getAllTopicFiles, readTopicFile } from '../storage/memory-md.js';
 import { generateAgentsMd } from '../consolidation/agents-md.js';
+import { ensureServices } from './startup.js';
 import type { ObservationType } from '../taxonomy/types.js';
 
 let dbInitialized = false;
@@ -237,6 +238,7 @@ async function finalizeSession(sessionId: string, project: string, client: Plugi
 
 export const server: Function = async (ctx: PluginContext) => {
   await ensureDb();
+  await ensureServices();
 
   return {
     'session.created': async ({ session }: { session: { id: string } }) => {
