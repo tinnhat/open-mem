@@ -65,4 +65,43 @@ describe('stripSensitiveData', () => {
     const result = stripSensitiveData(short)
     expect(result).toBe(short)
   })
+
+  it('redacts AWS access key IDs', () => {
+    const awsKey = 'AKIAIOSFODNN7EXAMPLE'
+    expect(stripSensitiveData(`AWS access key: ${awsKey}`)).toContain('[REDACTED]')
+  })
+
+  it('redacts AWS secret access keys', () => {
+    const input = 'aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+    expect(stripSensitiveData(input)).toContain('[REDACTED]')
+  })
+
+  it('redacts GCP API keys', () => {
+    const gcpKey = 'AIzaSyD7Qm8C7XfRvYdqM7Q2Q3K5L6FpR4XsKc'
+    expect(stripSensitiveData(`GCP key: ${gcpKey}`)).toContain('[REDACTED]')
+  })
+
+  it('redacts SSH private keys', () => {
+    const sshKey = '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQ...\n-----END RSA PRIVATE KEY-----'
+    expect(stripSensitiveData(sshKey)).toContain('[REDACTED]')
+  })
+
+  it('redacts JWT tokens', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ.Dignature'
+    expect(stripSensitiveData(`Bearer ${jwt}`)).toContain('[REDACTED]')
+  })
+
+  it('redacts generic secret patterns', () => {
+    expect(stripSensitiveData('secret=mySuperSecretPassword123')).toContain('[REDACTED]')
+    expect(stripSensitiveData('access_token=ghp_abc123xyz')).toContain('[REDACTED]')
+  })
+
+  it('redacts GitHub token patterns', () => {
+    expect(stripSensitiveData('github_token=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')).toContain('[REDACTED]')
+  })
+
+  it('redacts Stripe test keys', () => {
+    expect(stripSensitiveData('sk_test_AbCdEfGhIjKlMnOpQrStUvWxYz123')).toContain('[REDACTED]')
+    expect(stripSensitiveData('pk_test_AbCdEfGhIjKlMnOpQrStUvWxYz123')).toContain('[REDACTED]')
+  })
 })

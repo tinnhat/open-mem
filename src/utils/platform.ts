@@ -18,7 +18,7 @@ export function getMemoryDir(): string {
 }
 
 export function getPluginDir(): string {
-  return path.join(getOpenCodeConfigDir(), 'plugins', 'opencode-mem');
+  return path.join(getOpenCodeConfigDir(), 'plugins', 'session-memory-opencode');
 }
 
 export function isWindows(): boolean {

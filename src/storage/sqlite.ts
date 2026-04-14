@@ -26,17 +26,16 @@ export function generateContentHash(content: {
     fr: content.files_read?.map(f => f.toLowerCase().trim()).sort(),
     fm: content.files_modified?.map(f => f.toLowerCase().trim()).sort(),
   });
-  return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+  return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 32);
 }
 
 export async function findExistingObservation(hash: string, project: string): Promise<number | null> {
   const database = await getDb();
-  const escapedHash = hash.replace(/'/g, "''");
-  const escapedProject = project.replace(/'/g, "''");
 
   return new Promise((resolve) => {
     database.get(
-      `SELECT id FROM observations WHERE content_hash = '${escapedHash}' AND project = '${escapedProject}' LIMIT 1`,
+      `SELECT id FROM observations WHERE content_hash = ? AND project = ? LIMIT 1`,
+      [hash, project],
       (err, row: any) => {
         if (err) {
           console.error('[open-mem] Find existing observation error:', err);
@@ -252,6 +251,7 @@ export async function initDatabase(): Promise<void> {
 }
 
 export interface Observation {
+  id?: number;
   session_id: string;
   project: string;
   type: 'decision' | 'bugfix' | 'feature' | 'refactor' | 'discovery' | 'feedback' | 'reference';
@@ -280,6 +280,37 @@ export interface Summary {
   notes?: string;
   prompt_number?: number;
   discovery_tokens?: number;
+}
+
+export async function verifyFtsSync(observationId: number): Promise<boolean> {
+  const database = await getDb();
+  return new Promise((resolve) => {
+    database.get(
+      `SELECT rowid FROM observations_fts WHERE rowid = ?`,
+      [observationId],
+      (err, row) => {
+        resolve(!!row);
+      }
+    );
+  });
+}
+
+export async function syncFtsEntry(obs: Observation): Promise<void> {
+  const database = await getDb();
+  return new Promise((resolve, reject) => {
+    database.run(
+      `INSERT OR REPLACE INTO observations_fts(rowid, title, narrative, facts) VALUES (?, ?, ?, ?)`,
+      [obs.id, obs.title, obs.narrative, obs.facts],
+      (err) => {
+        if (err) {
+          console.error('[session-memory-opencode] FTS sync error:', err);
+          reject(err);
+        } else {
+          resolve();
+        }
+      }
+    );
+  });
 }
 
 export async function insertUserPrompt(
@@ -317,46 +348,87 @@ export async function insertObservation(obs: Observation): Promise<{ id: number;
     files_modified: obs.files_modified,
   });
 
-  const existingId = await findExistingObservation(contentHash, obs.project);
-  if (existingId !== null) {
-    console.log(`[open-mem] Deduplicated observation (hash: ${contentHash}, existing ID: ${existingId})`);
-    return { id: existingId, deduplicated: true, originalId: existingId };
-  }
-
   const database = await getDb();
-  const now = new Date().toISOString();
-  const nowEpoch = Date.now();
 
   return new Promise((resolve, reject) => {
-    database.run(`
-      INSERT INTO observations (
-        session_id, project, type, title, narrative, facts, concepts,
-        files_read, files_modified, prompt_number, discovery_tokens,
-        content_hash, quality_score, created_at, created_at_epoch
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      obs.session_id,
-      obs.project,
-      obs.type,
-      obs.title,
-      obs.narrative ?? null,
-      obs.facts ? JSON.stringify(obs.facts) : null,
-      obs.concepts ? JSON.stringify(obs.concepts) : null,
-      obs.files_read ? JSON.stringify(obs.files_read) : null,
-      obs.files_modified ? JSON.stringify(obs.files_modified) : null,
-      obs.prompt_number ?? null,
-      obs.discovery_tokens ?? 0,
-      contentHash,
-      obs.quality_score ?? 0.5,
-      now,
-      nowEpoch,
-    ], function(err) {
-      if (err) {
-        console.error('[open-mem] Insert observation error:', err);
-        reject(err);
-      } else {
-        resolve({ id: this.lastID, deduplicated: false });
-      }
+    database.serialize(() => {
+      database.run(`BEGIN IMMEDIATE`, (err) => {
+        if (err) {
+          console.error('[open-mem] Begin transaction error:', err);
+          reject(err);
+          return;
+        }
+
+        database.get(
+          `SELECT id FROM observations WHERE content_hash = ? AND project = ? LIMIT 1`,
+          [contentHash, obs.project],
+          (err, row: any) => {
+            if (err) {
+              database.run(`ROLLBACK`, () => reject(err));
+              return;
+            }
+
+            if (row?.id != null) {
+              database.run(`ROLLBACK`, () => {
+                console.log(`[open-mem] Deduplicated observation (hash: ${contentHash}, existing ID: ${row.id})`);
+                resolve({ id: row.id, deduplicated: true, originalId: row.id });
+              });
+              return;
+            }
+
+            const now = new Date().toISOString();
+            const nowEpoch = Date.now();
+
+            database.run(`
+              INSERT INTO observations (
+                session_id, project, type, title, narrative, facts, concepts,
+                files_read, files_modified, prompt_number, discovery_tokens,
+                content_hash, quality_score, created_at, created_at_epoch
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [
+              obs.session_id,
+              obs.project,
+              obs.type,
+              obs.title,
+              obs.narrative ?? null,
+              obs.facts ? JSON.stringify(obs.facts) : null,
+              obs.concepts ? JSON.stringify(obs.concepts) : null,
+              obs.files_read ? JSON.stringify(obs.files_read) : null,
+              obs.files_modified ? JSON.stringify(obs.files_modified) : null,
+              obs.prompt_number ?? null,
+              obs.discovery_tokens ?? 0,
+              contentHash,
+              obs.quality_score ?? 0.5,
+              now,
+              nowEpoch,
+            ], function(insErr) {
+              if (insErr) {
+                database.run(`ROLLBACK`, () => reject(insErr));
+                return;
+              }
+
+              const insertedId = this.lastID;
+
+              database.run(`COMMIT`, async (commitErr) => {
+                if (commitErr) {
+                  console.error('[open-mem] Commit error:', commitErr);
+                  reject(commitErr);
+                  return;
+                }
+
+                const synced = await verifyFtsSync(insertedId);
+                if (!synced) {
+                  console.warn(`[open-mem] FTS sync missing for observation ${insertedId}, manual sync needed`);
+                  const obsWithId: Observation = { ...obs, id: insertedId };
+                  await syncFtsEntry(obsWithId);
+                }
+
+                resolve({ id: insertedId, deduplicated: false });
+              });
+            });
+          }
+        );
+      });
     });
   });
 }
@@ -422,25 +494,29 @@ export async function searchFts(
     .map(term => `"${term.replace(/"/g, '""')}"`)
     .join(' OR ');
 
+  const params: (string | number)[] = [ftsQuery];
   let sql = `
     SELECT o.id, o.type, o.title, o.created_at
     FROM observations o
     JOIN observations_fts fts ON o.id = fts.rowid
-    WHERE observations_fts MATCH '${ftsQuery}'
+    WHERE observations_fts MATCH ?
   `;
 
   if (type) {
-    sql += ` AND o.type = '${type}'`;
+    sql += ` AND o.type = ?`;
+    params.push(type);
   }
 
   if (project) {
-    sql += ` AND o.project = '${project.replace(/'/g, "''")}'`;
+    sql += ` AND o.project = ?`;
+    params.push(project);
   }
 
-  sql += ` ORDER BY rank LIMIT ${limit} OFFSET ${offset}`;
+  sql += ` ORDER BY rank LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
 
   return new Promise((resolve, reject) => {
-    database.all(sql, (err, rows) => {
+    database.all(sql, params, (err, rows) => {
       if (err) {
         console.error('[open-mem] FTS search error:', err);
         resolve([]);
@@ -462,20 +538,24 @@ async function searchWithoutFts(
   const database = await getDb();
   const { type, project, limit = 20, offset = 0 } = options;
 
+  const params: (string | number)[] = [];
   let sql = `SELECT id, type, title, created_at FROM observations WHERE 1=1`;
 
   if (type) {
-    sql += ` AND type = '${type}'`;
+    sql += ` AND type = ?`;
+    params.push(type);
   }
 
   if (project) {
-    sql += ` AND project = '${project.replace(/'/g, "''")}'`;
+    sql += ` AND project = ?`;
+    params.push(project);
   }
 
-  sql += ` ORDER BY created_at_epoch DESC LIMIT ${limit} OFFSET ${offset}`;
+  sql += ` ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
 
   return new Promise((resolve, reject) => {
-    database.all(sql, (err, rows) => {
+    database.all(sql, params, (err, rows) => {
       if (err) {
         console.error('[open-mem] Search error:', err);
         resolve([]);
@@ -488,15 +568,14 @@ async function searchWithoutFts(
 
 export async function getRecentObservations(project: string, limit = 50): Promise<any[]> {
   const database = await getDb();
-  const escaped = project.replace(/'/g, "''");
 
   return new Promise((resolve, reject) => {
     database.all(`
       SELECT * FROM observations
-      WHERE project = '${escaped}'
+      WHERE project = ?
       ORDER BY created_at_epoch DESC
-      LIMIT ${limit}
-    `, (err, rows) => {
+      LIMIT ?
+    `, [project, limit], (err, rows) => {
       if (err) {
         console.error('[open-mem] Get recent observations error:', err);
         resolve([]);
@@ -510,14 +589,13 @@ export async function getRecentObservations(project: string, limit = 50): Promis
 export async function getRecentByProject(project: string, days: number): Promise<Observation[]> {
   const sinceEpoch = Date.now() - days * 24 * 60 * 60 * 1000;
   const database = await getDb();
-  const escaped = project.replace(/'/g, "''");
 
   return new Promise((resolve, reject) => {
     database.all(`
       SELECT * FROM observations
-      WHERE project = '${escaped}' AND created_at_epoch >= ${sinceEpoch}
+      WHERE project = ? AND created_at_epoch >= ?
       ORDER BY created_at_epoch DESC
-    `, (err, rows: any[]) => {
+    `, [project, sinceEpoch], (err, rows: any[]) => {
       if (err) {
         console.error('[open-mem] Get recent by project error:', err);
         resolve([]);
@@ -536,15 +614,14 @@ export async function getRecentByProject(project: string, days: number): Promise
 
 export async function getSessionSummary(sessionId: string): Promise<any | null> {
   const database = await getDb();
-  const escaped = sessionId.replace(/'/g, "''");
 
   return new Promise((resolve, reject) => {
     database.get(`
       SELECT * FROM summaries
-      WHERE session_id = '${escaped}'
+      WHERE session_id = ?
       ORDER BY created_at_epoch DESC
       LIMIT 1
-    `, (err, row) => {
+    `, [sessionId], (err, row) => {
       if (err) {
         console.error('[open-mem] Get session summary error:', err);
         resolve(null);
@@ -557,14 +634,13 @@ export async function getSessionSummary(sessionId: string): Promise<any | null> 
 
 export async function getSessionsSince(project: string, sinceEpoch: number): Promise<any[]> {
   const database = await getDb();
-  const escaped = project.replace(/'/g, "''");
 
   return new Promise((resolve, reject) => {
     database.all(`
       SELECT * FROM sessions
-      WHERE project = '${escaped}' AND started_at_epoch >= ${sinceEpoch}
+      WHERE project = ? AND started_at_epoch >= ?
       ORDER BY started_at_epoch DESC
-    `, (err, rows) => {
+    `, [project, sinceEpoch], (err, rows) => {
       if (err) {
         console.error('[open-mem] Get sessions since error:', err);
         resolve([]);
@@ -577,13 +653,12 @@ export async function getSessionsSince(project: string, sinceEpoch: number): Pro
 
 export async function countSessionsSince(project: string, sinceEpoch: number): Promise<number> {
   const database = await getDb();
-  const escaped = project.replace(/'/g, "''");
 
   return new Promise((resolve, reject) => {
     database.get(`
       SELECT COUNT(*) as count FROM sessions
-      WHERE project = '${escaped}' AND started_at_epoch >= ${sinceEpoch}
-    `, (err, row: any) => {
+      WHERE project = ? AND started_at_epoch >= ?
+    `, [project, sinceEpoch], (err, row: any) => {
       if (err) {
         console.error('[open-mem] Count sessions since error:', err);
         resolve(0);
@@ -715,6 +790,61 @@ export async function getTimeDecayScore(observationId: number): Promise<number> 
   });
 }
 
+export async function getTimeDecayScores(observationIds: number[]): Promise<Map<number, number>> {
+  const database = await getDb();
+  const scores = new Map<number, number>();
+
+  if (observationIds.length === 0) {
+    return scores;
+  }
+
+  const placeholders = observationIds.map(() => '?').join(',');
+  const rows = await new Promise<any[]>((resolve) => {
+    database.all(`
+      SELECT d.observation_id, d.importance_score, d.access_count, d.last_accessed_at, d.decay,
+             o.created_at_epoch
+      FROM observation_decay d
+      JOIN observations o ON o.id = d.observation_id
+      WHERE d.observation_id IN (${placeholders})
+    `, observationIds, (err: Error | null, result) => {
+      if (err) resolve([]);
+      else resolve(result);
+    });
+  });
+
+  for (const row of rows) {
+    const decayRate = row.decay === 'hot' ? 0.01 : row.decay === 'warm' ? 0.05 : 0.1;
+    const lastAccessed = row.last_accessed_at || row.created_at_epoch;
+    const hoursSinceAccess = (Date.now() - lastAccessed) / (1000 * 60 * 60);
+    const recencyScore = Math.exp(-decayRate * hoursSinceAccess);
+    const importanceWeight = row.importance_score || 0.5;
+    const accessBonus = Math.log1p(row.access_count || 0) * 0.1;
+    scores.set(row.observation_id, Math.min(1, recencyScore * importanceWeight + accessBonus));
+  }
+
+  for (const id of observationIds) {
+    if (!scores.has(id)) {
+      scores.set(id, 0);
+    }
+  }
+
+  return scores;
+}
+
+export async function optimizeFts(): Promise<void> {
+  const database = await getDb();
+  return new Promise((resolve) => {
+    database.run(
+      `INSERT INTO observations_fts(observations_fts) VALUES('optimize')`,
+      [],
+      (err) => {
+        if (err) console.error('[session-memory-opencode] FTS optimize error:', err);
+        resolve();
+      }
+    );
+  });
+}
+
 export async function getObservationDecay(observationId: number): Promise<string> {
   const database = await getDb();
 
@@ -827,18 +957,18 @@ export async function decayObservables(project: string): Promise<{ promoted: num
 
 export async function getStats(project: string): Promise<any> {
   const database = await getDb();
-  const escaped = project.replace(/'/g, "''");
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
   return new Promise((resolve) => {
     database.get(`
       SELECT
-        (SELECT COUNT(*) FROM observations WHERE project = '${escaped}') as total,
-        (SELECT COUNT(*) FROM observations WHERE project = '${escaped}' AND created_at_epoch > ?) as recent,
-        (SELECT COUNT(*) FROM observation_decay WHERE observation_id IN (SELECT id FROM observations WHERE project = '${escaped}') AND decay = 'hot') as hot,
-        (SELECT COUNT(*) FROM observation_decay WHERE observation_id IN (SELECT id FROM observations WHERE project = '${escaped}') AND decay = 'warm') as warm,
-        (SELECT COUNT(*) FROM observation_decay WHERE observation_id IN (SELECT id FROM observations WHERE project = '${escaped}') AND decay = 'cold') as cold,
-        (SELECT AVG(quality_score) FROM observations WHERE project = '${escaped}') as avgQuality
-    `, [Date.now() - 7 * 24 * 60 * 60 * 1000], (err: Error | null, row: any) => {
+        (SELECT COUNT(*) FROM observations WHERE project = ?) as total,
+        (SELECT COUNT(*) FROM observations WHERE project = ? AND created_at_epoch > ?) as recent,
+        (SELECT COUNT(*) FROM observation_decay WHERE observation_id IN (SELECT id FROM observations WHERE project = ?) AND decay = 'hot') as hot,
+        (SELECT COUNT(*) FROM observation_decay WHERE observation_id IN (SELECT id FROM observations WHERE project = ?) AND decay = 'warm') as warm,
+        (SELECT COUNT(*) FROM observation_decay WHERE observation_id IN (SELECT id FROM observations WHERE project = ?) AND decay = 'cold') as cold,
+        (SELECT AVG(quality_score) FROM observations WHERE project = ?) as avgQuality
+    `, [project, project, weekAgo, project, project, project, project], (err: Error | null, row: any) => {
       if (err) {
         console.error('[open-mem] Get stats error:', err);
         resolve({ total: 0, recent: 0, hot: 0, warm: 0, cold: 0, avgQuality: 0 });

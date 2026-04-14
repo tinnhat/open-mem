@@ -28,9 +28,16 @@ export async function generateAgentsMd(options: AgentsMdOptions): Promise<string
   const observations = await getRecentByProject(project, days);
   const sessions = await getSessionsSince(project, sinceEpoch);
 
+  const obsBySession = new Map<string, any[]>();
+  for (const obs of observations) {
+    const sessionId = obs.session_id;
+    if (!obsBySession.has(sessionId)) obsBySession.set(sessionId, []);
+    obsBySession.get(sessionId)!.push(obs);
+  }
+
   const sessionMap = new Map<string, SessionInfo>();
   for (const s of sessions) {
-    const sessionObs = observations.filter((o: any) => o.session_id === s.opencode_session_id);
+    const sessionObs = obsBySession.get(s.opencode_session_id) || [];
     sessionMap.set(s.opencode_session_id, {
       sessionId: s.opencode_session_id,
       startedAt: s.started_at,

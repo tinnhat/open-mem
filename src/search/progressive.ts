@@ -1,4 +1,4 @@
-import { getDb, searchFts, Observation, getTimeDecayScore } from '../storage/sqlite.js';
+import { getDb, searchFts, Observation, getTimeDecayScores } from '../storage/sqlite.js';
 import { ObservationType } from '../taxonomy/types.js';
 import { generateEmbedding, searchVectors, isVectorStoreAvailable, rrfMerge } from '../storage/vectors.js';
 
@@ -167,16 +167,17 @@ export async function searchWithTimeDecay(
     return results;
   }
 
-  const scoredWithDecay = await Promise.all(
-    results.map(async (r) => {
-      const decayScore = await getTimeDecayScore(r.id);
-      return {
-        ...r,
-        decayScore,
-        combinedScore: (r.score || 0) * 0.7 + decayScore * 0.3,
-      };
-    })
-  );
+  const ids = results.map(r => r.id);
+  const decayScores = await getTimeDecayScores(ids);
+
+  const scoredWithDecay = results.map((r) => {
+    const decayScore = decayScores.get(r.id) || 0;
+    return {
+      ...r,
+      decayScore,
+      combinedScore: (r.score || 0) * 0.7 + decayScore * 0.3,
+    };
+  });
 
   return scoredWithDecay
     .sort((a, b) => b.combinedScore - a.combinedScore)

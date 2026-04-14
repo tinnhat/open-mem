@@ -7,7 +7,7 @@ const OPENCODE_CONFIG = path.join(getOpenCodeConfigDir(), 'opencode.jsonc');
 const MEMORY_DIR = getMemoryDir();
 
 export async function uninstall() {
-  console.log('[opencode-mem] Starting uninstallation...\n');
+  console.log('[session-memory-opencode] Starting uninstallation...\n');
 
   try {
     // Step 1: Ask for confirmation
@@ -47,8 +47,8 @@ function updateOpencodeConfig() {
   try {
     let configContent = fs.readFileSync(OPENCODE_CONFIG, 'utf-8');
 
-    // Remove opencode-mem/plugin from the plugins array
-    configContent = configContent.replace(/["']opencode-mem\/plugin["'],?\s*/g, '');
+    // Remove session-memory-opencode/plugin from the plugins array
+    configContent = configContent.replace(/["']session-memory-opencode\/plugin["'],?\s*/g, '');
 
     // Clean up any double commas or trailing commas in arrays
     configContent = configContent.replace(/,\s*]/g, ']');
@@ -58,7 +58,7 @@ function updateOpencodeConfig() {
     console.log('         Updated:', OPENCODE_CONFIG);
   } catch (err) {
     console.warn('         Warning: Could not update config automatically.');
-    console.warn('         Please manually remove "opencode-mem/plugin" from plugins array in:');
+    console.warn('         Please manually remove "session-memory-opencode/plugin" from plugins array in:');
     console.warn('         ', OPENCODE_CONFIG);
   }
 }

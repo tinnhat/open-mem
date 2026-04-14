@@ -97,7 +97,7 @@ async function generateSessionSummary(
     const data = (result as any)?.data?.info?.structured_output;
     return data || null;
   } catch (error) {
-    console.error('[open-mem] Summary generation error:', error);
+    console.error('[session-memory-opencode] Summary generation error:', error);
     return null;
   }
 }
@@ -161,9 +161,9 @@ _Last updated: ${date}_
 `;
 
     await writeTopicFile(slug, content);
-    console.log('[open-mem] Exported observation to MEMORY.md topic:', slug);
+    console.log('[session-memory-opencode] Exported observation to MEMORY.md topic:', slug);
   } catch (error) {
-    console.error('[open-mem] Export to MEMORY.md error:', error);
+    console.error('[session-memory-opencode] Export to MEMORY.md error:', error);
   }
 }
 
@@ -196,7 +196,7 @@ async function updateMemoryIndex(project: string): Promise<void> {
       await writeMemoryIndex(before + existingEntries.join('\n') + '\n' + after);
     }
   } catch (error) {
-    console.error('[open-mem] Update memory index error:', error);
+    console.error('[session-memory-opencode] Update memory index error:', error);
   }
 }
 
@@ -220,16 +220,16 @@ async function finalizeSession(sessionId: string, project: string, client: Plugi
         completed: summary.completed,
         next_steps: summary.nextSteps,
       });
-      console.log('[open-mem] Session summary created for:', sessionId);
+      console.log('[session-memory-opencode] Session summary created for:', sessionId);
       await updateMemoryIndex(project);
     }
 
     const agentsMdContent = await generateAgentsMd({ project, days: 7 });
     const agentsMdPath = path.join(project, 'AGENTS.md');
     fs.writeFileSync(agentsMdPath, agentsMdContent);
-    console.log('[open-mem] AGENTS.md updated at:', agentsMdPath);
+    console.log('[session-memory-opencode] AGENTS.md updated at:', agentsMdPath);
   } catch (error) {
-    console.error('[open-mem] Finalize session error:', error);
+    console.error('[session-memory-opencode] Finalize session error:', error);
   } finally {
     sessionObservations.delete(sessionId);
     sessionPromptCount.delete(sessionId);
@@ -242,7 +242,7 @@ export const server: Function = async (ctx: PluginContext) => {
 
   return {
     'session.created': async ({ session }: { session: { id: string } }) => {
-      console.log('[open-mem] Session created:', session.id);
+      console.log('[session-memory-opencode] Session created:', session.id);
       sessionObservations.set(session.id, []);
       sessionPromptCount.set(session.id, 0);
     },
@@ -273,7 +273,7 @@ export const server: Function = async (ctx: PluginContext) => {
             contextLines.push('To learn more: use the `/mem-search` command');
 
             const contextPart = {
-              id: `prt_openmem-context-${Date.now()}`,
+              id: `prt_session_memory_context-${Date.now()}`,
               sessionID: input.sessionID,
               messageID: output.message.id,
               type: 'text',
@@ -284,7 +284,7 @@ export const server: Function = async (ctx: PluginContext) => {
             output.parts.unshift(contextPart);
           }
         } catch (error) {
-          console.error('[open-mem] Context injection error:', error);
+          console.error('[session-memory-opencode] Context injection error:', error);
         }
       }
 
@@ -295,7 +295,7 @@ export const server: Function = async (ctx: PluginContext) => {
         try {
           await insertUserPrompt(input.sessionID, input.text, promptNumber);
         } catch (error) {
-          console.error('[open-mem] User prompt store error:', error);
+          console.error('[session-memory-opencode] User prompt store error:', error);
         }
       }
     },
@@ -362,7 +362,7 @@ export const server: Function = async (ctx: PluginContext) => {
           );
         }
       } catch (error) {
-        console.error('[open-mem] Tool capture error:', error);
+        console.error('[session-memory-opencode] Tool capture error:', error);
       }
     },
 
@@ -372,20 +372,20 @@ export const server: Function = async (ctx: PluginContext) => {
           const project = ctx.directory || process.cwd();
           await finalizeSession(sessionId, project, ctx.client);
         } catch (error) {
-          console.error('[open-mem] Session idle error:', error);
+          console.error('[session-memory-opencode] Session idle error:', error);
         }
       }
     },
 
     'session.deleted': async ({ session }: { session: { id: string } }) => {
       const sessionId = session.id;
-      console.log('[open-mem] Session deleted:', sessionId);
+      console.log('[session-memory-opencode] Session deleted:', sessionId);
 
       try {
         const project = ctx.directory || process.cwd();
         await finalizeSession(sessionId, project, ctx.client);
       } catch (error) {
-        console.error('[open-mem] Session deleted error:', error);
+        console.error('[session-memory-opencode] Session deleted error:', error);
       }
     },
 

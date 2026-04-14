@@ -1,15 +1,15 @@
 {
-  "name": "opencode-mem",
+  "name": "session-memory-opencode",
   "version": "1.0.0",
   "description": "Persistent memory system for Opencode",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "opencode-mem": "dist/cli/index.js"
+    "session-memory-opencode": "dist/cli/index.js"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/tinnhat/opencode-mem.git"
+    "url": "https://github.com/tinnhat/session-memory-opencode.git"
   },
   "keywords": [
     "opencode",

@@ -1,4 +1,4 @@
-# opencode-mem
+# session-memory-opencode
 
 Persistent memory system for Opencode that automatically captures coding activities, compresses them with AI, and injects relevant context into future sessions.
 
@@ -16,14 +16,14 @@ Persistent memory system for Opencode that automatically captures coding activit
 ## Installation
 
 ```bash
-npm install -g opencode-mem
-opencode-mem install
+npm install -g session-memory-opencode
+session-memory-opencode install
 ```
 
 Or use npx:
 
 ```bash
-npx opencode-mem install
+npx session-memory-opencode install
 ```
 
 ## Usage
