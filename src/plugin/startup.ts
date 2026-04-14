@@ -1,7 +1,5 @@
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
+import { spawn } from 'child_process';
+import { getOllamaCommand } from '../utils/platform.js';
 
 const OLLAMA_HOST = 'http://localhost:11434';
 const DASHBOARD_PORT = 37778;
@@ -21,8 +19,7 @@ export async function ensureOllama(): Promise<boolean> {
 
   return new Promise((resolve) => {
     try {
-      const isWindows = process.platform === 'win32';
-      const ollamaCmd = isWindows ? 'ollama.exe' : 'ollama';
+      const ollamaCmd = getOllamaCommand();
       
       const proc = spawn(ollamaCmd, ['serve'], {
         detached: true,

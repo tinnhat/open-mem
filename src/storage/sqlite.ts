@@ -4,8 +4,9 @@ import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
 import { load as loadVecExtension } from 'sqlite-vec';
+import { getMemoryDir } from '../utils/platform.js';
 
-const MEMORY_DIR = path.join(os.homedir(), '.config', 'opencode', 'memory');
+const MEMORY_DIR = getMemoryDir();
 const DB_PATH = path.join(MEMORY_DIR, 'memory.db');
 const VEC_EXTENSION_LOADED = Symbol('vecExtensionLoaded');
 

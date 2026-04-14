@@ -1,10 +1,10 @@
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { execSync } from 'child_process';
+import { getOpenCodeConfigDir, getPluginDir, getMemoryDir } from '../../utils/platform.js';
 
-const PLUGIN_DIR = path.join(os.homedir(), '.config', 'opencode', 'plugins', 'opencode-mem');
-const OPENCODE_CONFIG = path.join(os.homedir(), '.config', 'opencode', 'opencode.jsonc');
+const PLUGIN_DIR = getPluginDir();
+const OPENCODE_CONFIG = path.join(getOpenCodeConfigDir(), 'opencode.jsonc');
 
 export async function install() {
   console.log('[opencode-mem] Starting installation...\n');
@@ -90,7 +90,7 @@ export async function install() {
     console.log('  1. Restart Opencode');
     console.log('  2. The plugin will auto-load');
     console.log('  3. Memory data will be stored at:');
-    console.log('    ', path.join(os.homedir(), '.config', 'opencode', 'memory'));
+    console.log('    ', getMemoryDir());
     
   } catch (err: any) {
     console.error('\n[opencode-mem] ❌ Installation failed:', err.message);

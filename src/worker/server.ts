@@ -3,9 +3,9 @@ import path from 'path';
 import { getDb } from '../storage/sqlite.js';
 import { search, timeline, getObservations } from '../search/progressive.js';
 import fs from 'fs';
-import os from 'os';
+import { getMemoryDir } from '../utils/platform.js';
 
-const MEMORY_DIR = path.join(os.homedir(), '.config', 'opencode', 'memory');
+const MEMORY_DIR = getMemoryDir();
 const DB_PATH = path.join(MEMORY_DIR, 'memory.db');
 
 const app = express();

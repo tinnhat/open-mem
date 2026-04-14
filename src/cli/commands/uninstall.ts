@@ -1,10 +1,10 @@
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
+import { getOpenCodeConfigDir, getPluginDir, getMemoryDir } from '../../utils/platform.js';
 
-const PLUGIN_DIR = path.join(os.homedir(), '.config', 'opencode', 'plugins', 'opencode-mem');
-const OPENCODE_CONFIG = path.join(os.homedir(), '.config', 'opencode', 'opencode.jsonc');
-const MEMORY_DIR = path.join(os.homedir(), '.config', 'opencode', 'memory');
+const PLUGIN_DIR = getPluginDir();
+const OPENCODE_CONFIG = path.join(getOpenCodeConfigDir(), 'opencode.jsonc');
+const MEMORY_DIR = getMemoryDir();
 
 export async function uninstall() {
   console.log('[opencode-mem] Starting uninstallation...\n');
